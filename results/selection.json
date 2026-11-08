@@ -1,0 +1,33 @@
+{
+  "criterion": "max val overall macro-F1, tie-break val evidence micro-F1",
+  "candidates": [
+    {
+      "checkpoint": "runs/qwen15_lora/checkpoint-38",
+      "name": "qwen15_lora_checkpoint-38",
+      "val_macro_f1": 0.26254141178239854,
+      "val_accuracy": 0.6310679611650486,
+      "val_evidence_micro_f1": 0.5321888412017168
+    },
+    {
+      "checkpoint": "runs/qwen15_lora/checkpoint-76",
+      "name": "qwen15_lora_checkpoint-76",
+      "val_macro_f1": 0.2862812329539119,
+      "val_accuracy": 0.6699029126213593,
+      "val_evidence_micro_f1": 0.527027027027027
+    },
+    {
+      "checkpoint": "runs/qwen15_lora/checkpoint-114",
+      "name": "qwen15_lora_checkpoint-114",
+      "val_macro_f1": 0.35286024419879175,
+      "val_accuracy": 0.6941747572815534,
+      "val_evidence_micro_f1": 0.5303030303030304
+    }
+  ],
+  "best": {
+    "checkpoint": "runs/qwen15_lora/checkpoint-114",
+    "name": "qwen15_lora_checkpoint-114",
+    "val_macro_f1": 0.35286024419879175,
+    "val_accuracy": 0.6941747572815534,
+    "val_evidence_micro_f1": 0.5303030303030304
+  }
+}

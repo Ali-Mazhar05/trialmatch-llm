@@ -1,0 +1,22 @@
+{
+  "model": "Qwen/Qwen2.5-1.5B-Instruct",
+  "data": "/kaggle/working/trialmatch-llm/data/processed",
+  "out": "runs/qwen15_lora",
+  "epochs": 3.0,
+  "lr": 0.0002,
+  "r": 16,
+  "alpha": 32,
+  "lora_dropout": 0.05,
+  "target_modules": "q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
+  "batch_size": 2,
+  "grad_accum": 8,
+  "max_prompt_tokens": 1800,
+  "warmup_ratio": 0.05,
+  "weight_decay": 0.0,
+  "load_dtype": "fp32",
+  "amp": "fp16",
+  "qlora": false,
+  "grad_ckpt": true,
+  "seed": 42,
+  "auto_adjusted": "micro-batch 4->2, grad_accum 4->8 (effective 16)"
+}

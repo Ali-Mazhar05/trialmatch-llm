@@ -1,1 +1,1 @@
-<your-hf-user>/trialmatch-qwen2.5-1.5b-lora
+AliMaz30/trialmatch-qwen2.5-1.5b-lora

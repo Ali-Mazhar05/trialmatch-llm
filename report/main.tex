@@ -16,7 +16,7 @@
 \maketitle
 
 \begin{abstract}
-We build and evaluate a complete, locally executable Transformer system that decides how individual inclusion and exclusion criteria of a clinical trial apply to a patient and cites the supporting patient sentences. Using only the TrialGPT Criterion Annotations dataset and a fixed patient-grouped 37/8/8 split, we fine-tune Qwen2.5-1.5B-Instruct with LoRA to emit a JSON object containing evidence sentence IDs followed by one of four expert label categories, including \emph{not enough information} and \emph{not applicable}. On the held-out test patients, fine-tuning changes accuracy from \tbd{x} to \tbd{y} and macro-F1 from \tbd{x} to \tbd{y}, and evidence micro-F1 from \tbd{x} to \tbd{y}. We additionally implement, from scratch, a Qwen2 forward pass with an explicit key/value cache (token-identical to an uncached reference at all tested lengths, \tbd{N}$\times$ faster decoding at 1024 input tokens), a tiled online-softmax attention kernel (max.\ error \tbd{e} vs.\ fp64), and greedy speculative decoding with a 0.5B draft (token-identical outputs, acceptance \tbd{a}\%, speed-up \tbd{s}$\times$). All components are exposed in a browser application that screens unseen notes and exports a provenance-tagged report.
+We build and evaluate a complete, locally executable Transformer system that decides how individual inclusion and exclusion criteria of a clinical trial apply to a patient and cites the supporting patient sentences. Using only the TrialGPT Criterion Annotations dataset and a fixed patient-grouped 37/8/8 split, we fine-tune Qwen2.5-1.5B-Instruct with LoRA to emit a JSON object containing evidence sentence IDs followed by one of four expert label categories, including \emph{not enough information} and \emph{not applicable}. On the 206 held-out test annotations, fine-tuning raises accuracy from 0.228 to 0.694, macro-F1 from 0.192 to 0.386 and evidence micro-F1 from 0.236 to 0.546, while rare classes (\emph{not included}, exclusion-side \emph{not enough information}) remain unsolved. We additionally implement, from scratch, a Qwen2 forward pass with an explicit key/value cache that is token-identical to an uncached reference at all nine tested input/output lengths and decodes 14.2$\times$ faster at 1{,}024 input tokens; a tiled online-softmax attention kernel (maximum error $2.0\times10^{-6}$ vs.\ fp64 in fp32); and greedy speculative decoding with a 0.5B draft, which is token-identical to greedy decoding with up to 96\% draft acceptance but 0.61--0.92$\times$ the speed of plain decoding on a T4, a slow-down we explain by layer-count-bound latency. All components are exposed in a browser application that screens unseen notes and exports a provenance-tagged report.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -35,7 +35,7 @@ Recruitment is a major bottleneck of clinical trials, and checking a patient aga
 \section{Related Work}
 \textbf{Patient--trial matching.} The patients in our data originate from the SIGIR 2016 test collection~\cite{koopman2016test}. TrialGPT~\cite{jin2024trialgpt} prompts GPT-4 to produce criterion-level labels, explanations and evidence sentences, then aggregates them into trial rankings. It relies on a proprietary API; we instead study what a 1.5B open model can learn from the expert annotations, and we never use the GPT-4 predictions stored in the dataset.
 
-\textbf{Transformers and efficient adaptation.} We build on the decoder-only Transformer~\cite{vaswani2017attention} with rotary position embeddings~\cite{su2024roformer} and grouped-query attention (GQA)~\cite{ainslie2023gqa}, as used by Qwen2.5~\cite{qwen2025qwen25} and Llama~3~\cite{dubey2024llama3}. LoRA~\cite{hu2022lora} trains low-rank updates $\Delta W=\tfrac{\alpha}{r}BA$ while freezing $W$; QLoRA~\cite{dettmers2023qlora} additionally quantises $W$ to 4-bit NF4. Full fine-tuning of a 1.5B model needs about 4$\times$ the weight memory for Adam states and would over-fit 602 examples; LoRA trains $<$\tbd{1.2}\% of the parameters. QLoRA reduces frozen-weight memory about 4$\times$ at the cost of de-quantisation overhead and quantisation error; on a 16\,GB T4 the 1.5B model fits without it (\S\ref{sec:decisions}).
+\textbf{Transformers and efficient adaptation.} We build on the decoder-only Transformer~\cite{vaswani2017attention} with rotary position embeddings~\cite{su2024roformer} and grouped-query attention (GQA)~\cite{ainslie2023gqa}, as used by Qwen2.5~\cite{qwen2025qwen25} and Llama~3~\cite{dubey2024llama3}. LoRA~\cite{hu2022lora} trains low-rank updates $\Delta W=\tfrac{\alpha}{r}BA$ while freezing $W$; QLoRA~\cite{dettmers2023qlora} additionally quantises $W$ to 4-bit NF4. Full fine-tuning of a 1.5B model needs about 4$\times$ the weight memory for Adam states and would over-fit 602 examples; LoRA trains $\approx$1.2\% of the parameters. QLoRA reduces frozen-weight memory about 4$\times$ at the cost of de-quantisation overhead and quantisation error; on a 16\,GB T4 the 1.5B model fits without it (\S\ref{sec:decisions}).
 
 \textbf{Efficient inference.} Pope et al.~\cite{pope2023efficiently} analyse KV-cache memory and why autoregressive decoding is memory-bandwidth bound; PagedAttention~\cite{kwon2023pagedattention} manages cache memory in blocks. FlashAttention~\cite{dao2022flashattention} computes exact attention in SRAM tiles using the online softmax normaliser of Milakov and Gimelshein~\cite{milakov2018online}, avoiding the $O(T^2)$ score matrix. Speculative decoding~\cite{leviathan2023fast,chen2023accelerating} lets a cheap draft model propose $k$ tokens that the target verifies in one forward pass; under greedy acceptance the output is provably identical to target-only greedy decoding. Limitations: speed-ups require high acceptance and a draft that is much cheaper than the target, which is not guaranteed for short structured outputs (\S\ref{sec:spec}).
 
@@ -59,7 +59,7 @@ Type & Label & Train & Val & Test\\\midrule
 \end{tabular}\end{table}
 
 \subsection{Input/output format and truncation}
-The prompt (Qwen chat format) contains a system instruction, the patient note as \texttt{[id] sentence} lines using the dataset's original sentence IDs, the criterion type, the criterion text, and the allowed labels for that type. The target is \texttt{\{"evidence\_ids":[\dots],"label":"\dots"\}<|im\_end|>}. Placing evidence \emph{before} the label conditions the decision on the cited sentences. The prompt is tokenised as a \emph{patient prefix} and a \emph{criterion suffix}; the same function is used in training, evaluation and the application, which makes prefix-KV reuse across criteria exact. If a prompt exceeded 1{,}800 tokens, patient sentences would be dropped from the end and logged with a flag if gold evidence was lost; with the Qwen tokenizer the longest prompt is 610 tokens (mean \tbd{326}), so \textbf{no example was truncated} (audit in the manifest). Explanations are generated deterministically from the predicted label and the quoted cited sentences; this guarantees that an explanation cannot introduce facts absent from the record and avoids training on GPT-4 explanations. Outputs are parsed strictly as JSON; a fallback searches for an allowed label string; otherwise the prediction is \emph{invalid} and counted as wrong.
+The prompt (Qwen chat format) contains a system instruction, the patient note as \texttt{[id] sentence} lines using the dataset's original sentence IDs, the criterion type, the criterion text, and the allowed labels for that type. The target is \texttt{\{"evidence\_ids":[\dots],"label":"\dots"\}<|im\_end|>}. Placing evidence \emph{before} the label conditions the decision on the cited sentences. The prompt is tokenised as a \emph{patient prefix} and a \emph{criterion suffix}; the same function is used in training, evaluation and the application, which makes prefix-KV reuse across criteria exact. If a prompt exceeded 1{,}800 tokens, patient sentences would be dropped from the end and logged with a flag if gold evidence was lost; with the Qwen tokenizer the longest prompt is 610 tokens (mean 326), so \textbf{no example was truncated} (audit in the manifest). Explanations are generated deterministically from the predicted label and the quoted cited sentences; this guarantees that an explanation cannot introduce facts absent from the record and avoids training on GPT-4 explanations. Outputs are parsed strictly as JSON; a fallback searches for an allowed label string; otherwise the prediction is \emph{invalid} and counted as wrong.
 
 \subsection{Model selection}
 Table~\ref{tab:models} compares the candidates. We select Qwen2.5-1.5B-Instruct: Apache-2.0 licence (no gating), GQA with only 2 KV heads (28\,KB of fp16 KV cache per token, 6$\times$ less than multi-head attention), a 151{,}936-token vocabulary shared with the 0.5B sibling that serves as a speculative draft, and fp32 weights (6.2\,GB) that fit a free 16\,GB T4 for LoRA training without quantisation. Llama-3.2-1B has a more restrictive community licence and a gated download, and Llama-3.2-3B leaves little memory for training on a T4.
@@ -79,7 +79,7 @@ Role & target & draft & rejected\\\bottomrule
 \end{tabular}\end{table}
 
 \subsection{Fine-tuning}
-Objective: token-level cross-entropy on the answer tokens only (prompt tokens masked with $-100$). LoRA ($r{=}16$, $\alpha{=}32$, dropout 0.05) is applied to all attention and MLP projections (\tbd{18.5M} trainable parameters, \tbd{1.2}\%). AdamW, learning rate $2\times10^{-4}$, cosine schedule with 5\% warm-up, effective batch 16 (4$\times$4 accumulation), 3 epochs, fp32 base weights with fp16 autocast, seed 42, on one Kaggle T4 (\tbd{time}, peak \tbd{GB}). A checkpoint is saved every epoch; the final model is the checkpoint with the best \emph{validation} macro-F1 (tie-break: evidence micro-F1). The test split is only accessible with an explicit \texttt{--final\_test} flag and was evaluated once.
+Objective: token-level cross-entropy on the answer tokens only (prompt tokens masked with $-100$). LoRA ($r{=}16$, $\alpha{=}32$, dropout 0.05) is applied to all attention and MLP projections (18.46M trainable parameters, 1.18\% of 1.56B). AdamW, learning rate $2\times10^{-4}$, cosine schedule with 5\% warm-up, effective batch 16 (micro-batch 2 $\times$ 8 accumulation steps, gradient checkpointing), 3 epochs, fp32 base weights with fp16 autocast, seed 42, on one Kaggle T4 (759\,s, peak 9.5\,GB). A checkpoint is saved every epoch; the final model is the checkpoint with the best \emph{validation} macro-F1 (tie-break: evidence micro-F1). The test split is only accessible with an explicit \texttt{--final\_test} flag and was evaluated once.
 
 \subsection{System architecture}
 Fig.~\ref{fig:arch} shows the pipeline. The LoRA adapter is merged into the base weights ($W\leftarrow W+\tfrac{\alpha}{r}BA$) so that all inference code sees a dense model.
@@ -128,7 +128,7 @@ A Gradio application (Fig.~\tbd{screenshot}) is started with \texttt{start.bat}/
 
 %=====================================================================
 \section{Experimental Setup and Metrics}
-\textbf{Hardware.} Training and GPU benchmarks: Kaggle, 1$\times$ NVIDIA T4 (16\,GB, no bf16), \tbd{torch/transformers versions}. Application: Intel Core i5-10210U laptop CPU, 24\,GB RAM, fp32.
+\textbf{Hardware.} Training and GPU benchmarks: Kaggle, 1$\times$ NVIDIA T4 (16\,GB, no bf16), Python 3.13, PyTorch 2.11 (CUDA 13), transformers 5.22.2, peft 0.21.2. Application: Intel Core i5-10210U laptop CPU, 24\,GB RAM, fp32.
 \textbf{Decoding.} Greedy, \texttt{max\_new\_tokens}=64, batch 8 with left padding for metric evaluation; identical prompts and rows before and after fine-tuning.
 \textbf{Classification.} Accuracy, macro-F1 over the gold classes present, per-class P/R/F1 and confusion matrices for inclusion, exclusion, and overall (8 type-specific classes).
 \textbf{Evidence.} Micro P/R/F1 sums TP/FP/FN over rows; macro averages row-level scores. Empty-set conventions: gold $=\emptyset$ and prediction $=\emptyset$ scores 1; exactly one empty scores 0. Because 60\% of rows have empty gold evidence, we also report metrics restricted to rows with non-empty gold evidence (no convention needed) and the counts of the four empty/non-empty patterns.
@@ -137,51 +137,115 @@ A Gradio application (Fig.~\tbd{screenshot}) is started with \texttt{start.bat}/
 %=====================================================================
 \section{Results and Discussion}
 \subsection{Fine-tuning and before/after comparison}
-Fig.~\ref{fig:curves} shows the training curves (\tbd{interpretation: e.g. validation loss minimum at epoch k}). Table~\ref{tab:main} compares the base and fine-tuned model on identical validation and test rows. \tbd{Discussion: the base model mostly outputs X, over-predicts Y, invalid rate Z; after fine-tuning ...}
+Training took 759\,s on one T4 with a peak of 9.5\,GB (114 optimiser steps). Fig.~\ref{fig:curves} shows that the answer-token loss drops from 0.30 to about 0.12 during the first epoch and to about 0.06 by the end of epoch~3; the validation loss is lowest after epoch~1 (0.120) and rises slightly afterwards (0.126, 0.127), a mild sign of over-fitting. Validation macro-F1, however, keeps improving (0.263, 0.286, 0.353 after epochs 1--3, \texttt{results/selection.json}), because the extra epochs mainly improve the rare classes, which contribute little to the token loss but much to macro-F1. We therefore select by the task metric, not the loss, and the epoch-3 checkpoint is used everywhere.
 
 \begin{figure}[t]\centering\includegraphics[width=\columnwidth]{training_curves}
-\caption{LoRA training and validation loss.}\label{fig:curves}\end{figure}
+\caption{LoRA training loss (per 5 steps) and validation loss (per epoch) on answer tokens.}\label{fig:curves}\end{figure}
+
+Table~\ref{tab:main} compares the same model before and after fine-tuning on identical rows with identical greedy decoding. Both versions always produce parseable JSON (strict-JSON rate 1.00), so the differences are in content. The base model systematically misreads the exclusion label semantics: it answers \emph{excluded} for all 131 exclusion criteria on test (139/140 on validation), giving 0.0 exclusion accuracy, i.e.\ it interprets ``excluded'' as ``this criterion is relevant'' rather than ``the patient meets an exclusion condition''. On inclusion criteria it is already reasonable (0.627 accuracy). Fine-tuning fixes the exclusion semantics (0.687 accuracy), modestly improves inclusion (0.707), and triples evidence precision (micro-P 0.146$\rightarrow$0.505) because the base model over-cites sentences.
 
 \begin{table*}[t]\centering\caption{Criterion classification and evidence retrieval (greedy, same rows). Ev.\ = evidence; $>0$ = rows with non-empty gold evidence.}\label{tab:main}
 \begin{tabular}{llcccccccc}\toprule
 Split & Model & Acc. & Macro-F1 & Inc.\ mF1 & Exc.\ mF1 & Ev.\ micro-F1 & Ev.\ macro-F1 & Ev.\ micro-F1 ($>0$) & Strict JSON\\\midrule
-\input{generated_tables.tex}
+val & base & 0.141 & 0.103 & 0.198 & 0.007 & 0.188 & 0.464 & 0.311 & 1.00 \\
+val & fine-tuned & 0.694 & 0.353 & 0.328 & 0.378 & 0.530 & 0.703 & 0.631 & 1.00 \\
+\midrule
+test & base & 0.228 & 0.192 & 0.336 & 0.000 & 0.236 & 0.608 & 0.403 & 1.00 \\
+test & fine-tuned & 0.694 & 0.386 & 0.379 & 0.395 & 0.546 & 0.790 & 0.651 & 1.00 \\
 \bottomrule\end{tabular}\end{table*}
 
 \subsection{Detailed classification and evidence analysis}
-Fig.~\ref{fig:cm} shows the test confusion matrices. \tbd{Per-class discussion: NEI vs. definite labels, rare classes not included/excluded, not applicable.} \tbd{Evidence: precision vs. recall, empty-pattern counts.}
+Fig.~\ref{fig:cm} and Table~\ref{tab:perclass} give the per-class behaviour of the fine-tuned model on test. For inclusion criteria, the two frequent classes are learnt well (\emph{included} F1 0.76, \emph{not enough information} F1 0.76), but the rare classes are never predicted: the 7 \emph{not included} cases become \emph{included} (4) or \emph{not enough information} (3), and the 3 \emph{not applicable} cases become \emph{not enough information}. For exclusion criteria the model has collapsed towards the majority class: \emph{not excluded} has recall 0.96, but all 28 \emph{not enough information} cases are also predicted \emph{not excluded}, and only 3 of 12 \emph{not applicable} cases are recovered (precision 0.75). The test split contains no \emph{excluded} example; the model predicts it 3 times (all false positives), and on validation it finds both \emph{excluded} cases (recall 1.0, precision 0.25). Macro-F1 (0.386) is therefore much lower than accuracy (0.694): it is dominated by classes with 3--13 training examples.
+
+\begin{table}[t]\centering\caption{Per-class test metrics, fine-tuned model.}\label{tab:perclass}\setlength{\tabcolsep}{4pt}
+\begin{tabular}{llcccr}\toprule
+Type & Class & P & R & F1 & n\\\midrule
+Inc. & included & 0.64 & 0.93 & 0.76 & 27\\
+ & not included & 0.00 & 0.00 & 0.00 & 7\\
+ & not enough info. & 0.78 & 0.74 & 0.76 & 38\\
+ & not applicable & 0.00 & 0.00 & 0.00 & 3\\\midrule
+Exc. & excluded & 0.00 & -- & -- & 0\\
+ & not excluded & 0.70 & 0.96 & 0.81 & 91\\
+ & not enough info. & 0.00 & 0.00 & 0.00 & 28\\
+ & not applicable & 0.75 & 0.25 & 0.38 & 12\\\bottomrule
+\end{tabular}\end{table}
+
+\emph{Evidence.} On all test rows, micro P/R/F1 is 0.505/0.596/0.546 and macro F1 is 0.790; the macro score is inflated by the 128 rows where both gold and prediction are empty (counted as 1 by our convention). Restricted to the 61 rows with non-empty gold evidence, micro-F1 is 0.651 (inclusion 0.709, exclusion 0.489). Compared with the base model, spurious citations on gold-empty rows fall from 36 to 17 and exact set matches rise from 52.9\% to 74.8\%. Evidence for exclusion criteria is the weak point (micro recall 0.344): the model rarely cites the demographic sentence that annotators use to justify \emph{not excluded} (e.g.\ age).
 
 \begin{figure}[t]\centering\includegraphics[width=\columnwidth]{confusion_test_ft_best}
 \caption{Test confusion matrices of the fine-tuned model (NEI = not enough information).}\label{fig:cm}\end{figure}
 
 \subsection{Error analysis}
-Using the automatic taxonomy in \texttt{scripts/error\_analysis.py} (E1--E9), we analyse at least eight distinct test errors: \tbd{(1) unsupported certainty: ... (2) missed information ... (3) polarity ... (4) not applicable ... (5) definite label without evidence ... (6) spurious citation ... (7) correct label, wrong evidence ... (8) contradictory: right evidence, wrong label ...}. In line with the protocol, absence of evidence is never treated as proof: \tbd{how often the model predicts a definite label with no cited sentence}.
+The fine-tuned model makes 63 label errors on the 206 test annotations. The automatic taxonomy in \texttt{scripts/error\_analysis.py} assigns them (non-exclusively) to: unsupported certainty E2 (38), applicability errors E5 (13), polarity errors E4 (7), missed available information E3 (5) and right-evidence/wrong-label contradictions E9 (3); no output was invalid (E1). Eight representative cases (full list in \texttt{results/test/ft\_best/error\_analysis.md}):
+\begin{enumerate}
+\item \textbf{Missing information treated as negative (E2).} Exclusion ``estimated pre-operative GFR $<$30\,mL/min'': the note contains no renal data (gold \emph{not enough information}), the model answers \emph{not excluded} with no evidence. This is the dominant failure: it treats absence of a finding as proof that the exclusion does not apply.
+\item \textbf{Unsupported certainty with available context (E2).} Exclusion ``patients were moribund'': annotators cite sentences 0--4 describing a critically ill patient but judge the information insufficient; the model answers \emph{not excluded} without citing anything.
+\item \textbf{Missed available information (E3).} Inclusion ``diagnosed with shock, ARDS, or both'': gold \emph{included} with sentences 2--3 (pale, tachypnoeic, tachycardic, blood pressure 80/60); the model answers \emph{not enough information}, failing to map haemodynamic findings to the diagnosis ``shock''.
+\item \textbf{Polarity error by topical similarity (E4).} Inclusion ``patients undergoing open abdominal aortic aneurysm repair'': the patient has a pulsatile groin mass with lost distal pulses after femoral catheterisation; the model cites sentences 0--2 and answers \emph{included}, matching the vascular topic instead of the specific procedure (gold \emph{not included}). Two sibling criteria of the same trial fail identically.
+\item \textbf{Applicability (E5).} Exclusion ``pregnant women or women of childbearing age without adequate contraception'' for a 48-year-old man (sentence 0): annotators label it \emph{not excluded} citing the sex in sentence 0, the model answers \emph{not applicable} without evidence. Both readings are defensible; the boundary between ``does not apply'' and ``condition absent'' is a labelling convention seen in only 28 training examples.
+\item \textbf{Applicability, reverse direction (E5).} Exclusion ``previous tonsillectomy'' for a sleep-apnoea trial: gold \emph{not applicable}, predicted \emph{not excluded}.
+\item \textbf{Right label, missing evidence (E8).} Exclusion ``less than 18 years of age'': correctly \emph{not excluded}, but the age sentence 0 is not cited; 20 correct predictions have incomplete evidence.
+\item \textbf{Contradictory evidence and label (E9).} Inclusion ``immune deficiency and early bone-marrow failure in childhood'': the model cites the correct sentence (``48-year-old \dots common variable immunodeficiency'') but answers \emph{included}, ignoring the qualifier ``in childhood''; gold \emph{not enough information}. A similar case is a compound sleep-disordered-breathing definition that is only partially supported by ``nighttime snoring, pauses in breathing''.
+\end{enumerate}
+\emph{Traceability and absent evidence.} Every prediction links to its cited sentence IDs, the quoted text and the raw model output. 115 test predictions are definite labels without any cited sentence; most are \emph{not excluded} decisions that mirror the annotation convention (291 training rows are \emph{not excluded} with empty evidence), but they are exactly the E2 risk above. The application therefore labels such outputs ``unsupported, should be reviewed'' in the explanation and never presents missing evidence as proof.
 
 \subsection{KV cache}
-Table~\tbd{kv} and Fig.~\ref{fig:kv}: all paths produce identical greedy tokens for input lengths 128/512/1024 and output lengths 32/128/256 \tbd{(or: first mismatch at step s, top-2 logit margin m)}. Cached decoding throughput is roughly constant in sequence length while uncached cost grows with $T$, yielding \tbd{N}$\times$ at 1024+256 tokens. The cache costs \tbd{MB} at 1280 tokens, consistent with 28\,KB/token. \emph{Numerical differences:} cached and uncached paths compute the same mathematical function, but in fp16 the reduction order differs (matrix-vector vs.\ matrix-matrix kernels), so logits differ by \tbd{measured magnitude} and argmax flips are possible only at near-ties.
+Table~\ref{tab:kv} and Fig.~\ref{fig:kv} report the fine-tuned (merged) model in fp16 on a T4. \textbf{Correctness:} all four paths produce identical greedy tokens in all nine (input, output) settings, i.e.\ 1{,}248 generated tokens per path and repeat with no mismatch, and outputs were identical across the three timed repeats. \textbf{Speed:} cached decoding runs at a constant 37\,tok/s (own engine) and 26\,tok/s (HF forward with our explicit cache) regardless of context length, whereas the uncached reference falls from 22.5 to 2.6\,tok/s as the context grows, because every step re-processes the whole sequence ($O(T)$ work per token, $O(T^2)$ per sequence). At 1{,}024+256 tokens the engine is 14.2$\times$ faster than the uncached reference (6.9\,s vs.\ 96.3\,s decode). Our engine is also 1.4$\times$ faster than the HF cached loop and has 40\% lower prefill latency at 1{,}024 tokens (170 vs.\ 290\,ms); we attribute this to less Python-level overhead per layer (no mask construction or generic output objects), not to a different algorithm. \textbf{Memory:} the cache for 1{,}279 positions occupies 35\,MB ($28{,}672$\,B/token), negligible next to the 3.1\,GB of weights; peak memory is \emph{lower} with caching (3.06 vs.\ 3.70\,GB) because the uncached path materialises activations for the full sequence at every step. \emph{Numerical differences:} both paths compute the same function, but the cached step uses matrix--vector products and a different reduction order than the full-sequence matrix--matrix products, so fp16 logits are not bit-identical; an argmax flip can occur only at a near-tie, which we did not observe.
+
+\begin{table}[t]\centering\caption{Greedy decoding with/without KV cache (T4, fp16, 256 new tokens, median of 3).}\label{tab:kv}\setlength{\tabcolsep}{3pt}
+\begin{tabular}{rlrrrc}\toprule
+In & Path & Prefill & tok/s & Peak MB & $=$ref\\\midrule
+128 & HF, no cache (ref.) & 41\,ms & 14.5 & 3178 & --\\
+128 & HF + explicit cache & 44\,ms & 26.5 & 2998 & \checkmark\\
+128 & own engine + cache & 30\,ms & 37.1 & 2974 & \checkmark\\
+512 & HF, no cache (ref.) & 134\,ms & 5.4 & 3401 & --\\
+512 & own engine + cache & 77\,ms & 36.6 & 3012 & \checkmark\\
+1024 & HF, no cache (ref.) & 305\,ms & 2.6 & 3699 & --\\
+1024 & HF + explicit cache & 292\,ms & 26.3 & 3301 & \checkmark\\
+1024 & own engine, no cache & 185\,ms & 4.7 & 3044 & \checkmark\\
+1024 & own engine + cache & 170\,ms & 37.0 & 3060 & \checkmark\\\bottomrule
+\end{tabular}\end{table}
 
 \begin{figure}[t]\centering\includegraphics[width=\columnwidth]{kv_cache_bench}
 \caption{Decode throughput and peak memory, cached vs.\ uncached.}\label{fig:kv}\end{figure}
 
 \subsection{Tiled attention}
-Our tiled kernel matches the fp64 reference with maximum error \tbd{e} (fp32) and \tbd{e} (fp16) over all shapes, masks and block sizes (Fig.~\ref{fig:attn}). It is \tbd{x}$\times$ slower than PyTorch SDPA because each tile is a separate Python-level kernel launch, intermediate tiles are written to and read back from HBM instead of staying in on-chip SRAM, and the rescaling adds element-wise passes; a fused kernel performs the entire loop inside one CUDA kernel. Its memory advantage over the reference (which materialises $T^2$ scores: 12 heads$\times4096^2\times2$\,B $=$ 384\,MB at $T{=}4096$) is nonetheless visible.
+\textbf{Numerics.} Over six shapes (including $T_q{=}1$ and $T_q{=}7$ queries against 300 cached keys with bottom-right masks), causal and non-causal masks and two tile sizes, the tiled kernel's maximum absolute error against an fp64 reference is $2.0\times10^{-6}$ in fp32 and $9.8\times10^{-4}$ in fp16, the same order as PyTorch SDPA ($6.6\times10^{-7}$ / $1.2\times10^{-3}$); the fp16 error is set by fp16 input rounding, not by the algorithm. A unit test with scores of magnitude $10^4$ confirms that the running-maximum rescaling avoids overflow. Inside the full model, swapping our tiled kernel in reproduces Hugging Face logits within $10^{-4}$ (unit test), and the application exposes it as an inference mode.
+
+\textbf{Performance} (Fig.~\ref{fig:attn}, $1{\times}12$ heads, $d{=}128$, fp16, T4): at $T{=}4096$ the reference needs 64.7\,ms and 2{,}304\,MB of extra memory (it materialises fp32 score and probability matrices, $12{\times}4096^2{\times}4$\,B $=$ 805\,MB each), our tiled kernel needs only 87\,MB but takes 173\,ms ($B{=}128$) or 652\,ms ($B{=}64$), and fused SDPA (FlashAttention backend enabled) needs 3.7\,ms and 12\,MB. The educational kernel is therefore 47$\times$ slower than the fused kernel while achieving the same memory scaling. The reasons: each tile issues several separate GPU kernels launched from a Python loop ($O((T/B)^2)$ launches); every intermediate ($S$, $P$, rescaled $O$) is written to and read back from global HBM instead of staying in on-chip SRAM/registers; and the rescaling adds extra element-wise passes. A fused kernel runs the whole loop inside one CUDA kernel with tiles in shared memory. Larger tiles help (fewer launches) at the cost of more memory per tile.
 
 \begin{figure}[t]\centering\includegraphics[width=\columnwidth]{attention_bench}
 \caption{Attention runtime and extra memory vs.\ sequence length (T4, fp16).}\label{fig:attn}\end{figure}
 
 \subsection{Speculative decoding}\label{sec:spec}
-Fig.~\ref{fig:spec}: outputs are token-identical to greedy decoding for every prompt and $k$. \tbd{Acceptance x\%, best k, speed-up or slow-down.} \tbd{Explain: the 0.5B draft costs about 1/3 of the target per token on a T4 at batch 1 because both are launch/latency bound, so the theoretical speed-up $\frac{1-\alpha^{k+1}}{(1-\alpha)(1+k c)}$ with cost ratio $c\approx$ \dots is small; the JSON answers are short (around 20 tokens); a fine-tuned draft raises acceptance from x to y.}
+We evaluate two workloads on 8 validation prompts: the real screening task (short JSON answers, EOS on) and a 128-token free-text summary (EOS off), for $k\in\{1,2,4,6,8\}$, with the fine-tuned target and either the base or a LoRA-fine-tuned 0.5B draft (Fig.~\ref{fig:spec}, Table~\ref{tab:spec}). \textbf{Correctness:} in all 160 (prompt, $k$, draft, workload) runs the output is token-identical to target-only greedy decoding. \textbf{Acceptance:} with the base draft, 56--82\% of drafted tokens are accepted on the task; fine-tuning the draft on the same training split raises this to 84--96\% (up to 6.6 tokens per target call at $k{=}8$), while acceptance on free text is unchanged (51--85\%), confirming that the gain comes from matching the task's output distribution. \textbf{Speed:} despite this, speculative decoding is \emph{slower} than plain greedy in every configuration: 0.61--0.86$\times$ with the base draft and 0.64--0.92$\times$ with the fine-tuned draft (best: fine-tuned draft, $k{=}6$, task workload, 0.92$\times$).
+
+\emph{Why it is slower.} One round costs $k\,c\,T_t + T_v$, where $T_t$ is a target decode step, $c$ the draft/target cost ratio, and $T_v\approx T_t$ the verification pass (at batch 1, processing $k{+}1$ tokens costs about as much as one). The speed-up is $\bar a/(1+kc)$ with $\bar a$ tokens emitted per round. At batch 1 on a T4 both models are latency-bound (kernel launches and weight reads per layer), so cost scales with the number of layers rather than parameters: the 24-layer draft costs nearly as much per token as the 28-layer target ($c\approx24/28\approx0.86$). Solving the measured fine-tuned-draft $k{=}6$ point ($\bar a{=}5.79$, speed-up 0.915) gives $c\approx0.89$, consistent with this estimate, and the draft accounts for 38--84\% of total time. A speed-up would need $c\ll1$: a much shallower draft, a larger target (e.g.\ 7B), batching, or a CUDA-graph decode loop that removes per-layer launch overhead.
+
+\begin{table}[t]\centering\caption{Speculative decoding (task workload, 8 prompts; greedy target: 35\,tok/s).}\label{tab:spec}\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lrcccc}\toprule
+Draft & $k$ & Accept. & Tok/call & Speed-up & $=$greedy\\\midrule
+base 0.5B & 1 & 0.83 & 1.80 & 0.77 & \checkmark\\
+base 0.5B & 4 & 0.56 & 2.87 & 0.62 & \checkmark\\
+base 0.5B & 6 & 0.72 & 4.11 & 0.81 & \checkmark\\
+LoRA 0.5B & 1 & 0.96 & 1.92 & 0.81 & \checkmark\\
+LoRA 0.5B & 4 & 0.84 & 4.15 & 0.82 & \checkmark\\
+LoRA 0.5B & 6 & 0.94 & 5.79 & 0.92 & \checkmark\\
+LoRA 0.5B & 8 & 0.87 & 6.60 & 0.87 & \checkmark\\\bottomrule
+\end{tabular}\end{table}
 
 \begin{figure}[t]\centering\includegraphics[width=\columnwidth]{speculative_bench}
 \caption{Speculative decoding speed-up and acceptance vs.\ draft length $k$.}\label{fig:spec}\end{figure}
 
 \subsection{Design decisions, alternatives and failures}\label{sec:decisions}
 \begin{itemize}
-\item \textbf{LoRA vs.\ QLoRA vs.\ full FT:} \tbd{...}
-\item \textbf{Evidence-first JSON vs.\ label-first:} \tbd{...}
-\item \textbf{Template explanations vs.\ generated rationales:} generated rationales would require GPT-4 explanations as training targets (excluded) and can hallucinate; we chose faithful templates.
-\item \textbf{Prefix caching} across criteria saves \tbd{x}\% of prefill time in the application.
-\item \textbf{Failures observed:} \tbd{e.g., base model produced prose instead of JSON; \texttt{is\_causal} mask misalignment; transformers v5 API changes (\texttt{warmup\_ratio}); fp16 near-tie mismatches.}
+\item \textbf{LoRA vs.\ QLoRA vs.\ full fine-tuning.} Full fine-tuning would need fp32 weights, gradients and two Adam moments ($\approx$25\,GB) and would over-fit 602 examples. LoRA with fp32 frozen weights peaked at 9.5\,GB on the T4, so QLoRA's 4-bit quantisation (and its quantisation error and bitsandbytes dependency) was unnecessary; it remains available via \texttt{--qlora}.
+\item \textbf{Model selection by task metric, not loss.} Validation loss favoured epoch 1, validation macro-F1 favoured epoch 3 (0.263 vs.\ 0.353); since the deliverable is a classifier we used macro-F1.
+\item \textbf{Evidence-first JSON.} Chosen so that the label is generated conditioned on the cited sentences; a label-first ablation was not run within the time budget and is future work.
+\item \textbf{Template explanations vs.\ generated rationales.} Generated rationales would need GPT-4 explanations as targets (not permitted) and could hallucinate; templates quoting cited sentences are faithful by construction but shallow.
+\item \textbf{Prefix caching.} Placing the patient note before the criterion lets the application prefill each patient once: on the test set this removes 71\% of prefill tokens (63{,}677$\rightarrow$18{,}507 for 12.9 criteria per patient--trial pair on average).
+\item \textbf{Fine-tuned vs.\ base draft.} Raised acceptance by 13--29 points on the task workload but could not overcome the layer-count cost ratio.
+\item \textbf{Failures observed and fixed.} (i) The first training run crashed in \texttt{peft} because Kaggle ships an incompatible \texttt{torchao}; we disable the unused torchao path. (ii) The next run ran out of memory: on ``T4$\times$2'' the HF Trainer silently wrapped the model in \texttt{DataParallel}, and without gradient checkpointing 28 layers of MLP activations for batch 4 exceed 16\,GB; we pin one GPU, enable checkpointing and use micro-batch 2$\times$8 accumulation (same effective batch). (iii) \texttt{transformers} v5 removed \texttt{warmup\_ratio}. (iv) PyTorch's \texttt{is\_causal=True} is top-left aligned and silently wrong for cached queries ($T_q{<}T_k$); we pass explicit bottom-right masks and a unit test checks the cached-query case against the reference. (v) One dataset row has empty criterion text and was removed.
 \end{itemize}
 
 %=====================================================================
@@ -189,14 +253,14 @@ Fig.~\ref{fig:spec}: outputs are token-identical to greedy decoding for every pr
 Small data (602 training annotations, 37 patients) and severe class imbalance (8 training \emph{excluded} examples, none in test) make per-class results for rare classes unreliable; 8 test patients give wide confidence intervals. Notes are short, synthetic-style SIGIR topics rather than full EHRs. The 1.5B model has limited medical knowledge. Explanations are faithful but shallow. CPU inference is slow (seconds per criterion). Speculative decoding gains are hardware-dependent. The aggregated outcome is a heuristic, not validated against trial enrolment. The system is an educational prototype and must not be used for clinical decisions.
 
 \section{Conclusion}
-\tbd{Summarise the main quantitative findings and lessons.}
+A 1.5B open-weight decoder fine-tuned with LoRA on 602 expert annotations reaches 0.694 accuracy and 0.386 macro-F1 on held-out patients (from 0.228 and 0.192), with evidence micro-F1 of 0.546, entirely on free hardware. Its remaining errors are concentrated in rare labels and in treating missing information as negative, which the application surfaces rather than hides. On the systems side, an explicit KV cache gives exact outputs and a 14$\times$ decode speed-up at 1k context; a tiled online-softmax kernel is numerically exact but 47$\times$ slower than a fused kernel, illustrating that FlashAttention's benefit comes from kernel fusion and on-chip memory rather than the algorithm alone; and speculative decoding is exact and reaches 96\% acceptance with a task-tuned draft but still slows decoding, because at batch 1 the cost of a sibling draft is governed by its depth. Future work: class-balanced training, label-first/evidence-first ablations, a shallower draft, and evaluation on full EHR notes.
 
 \appendices
 \section{AI-use statement}
 An AI coding assistant (Anthropic Claude) was used to draft code scaffolding, unit tests and parts of this report's text. All code was reviewed, executed and tested by the author (41 unit tests); all numbers come from logged runs in the repository. Design decisions, analysis and verification are the author's own responsibility.
 
 \section{Reproducibility}
-Code: \tbd{GitHub URL}. Adapter: \tbd{HF URL}. Split manifest: \texttt{splits/manifest.json}. Logs: \texttt{results/}. Demo video: \tbd{URL}.
+Code: \url{https://github.com/Ali-Mazhar05/trialmatch-llm}. Adapters: \url{https://huggingface.co/AliMaz30/trialmatch-qwen2.5-1.5b-lora} (target) and \url{https://huggingface.co/AliMaz30/trialmatch-qwen2.5-0.5b-draft-lora} (draft). Split manifest: \texttt{splits/manifest.json}. Logs: \texttt{results/}. Demo video: \tbd{URL}.
 
 \bibliographystyle{IEEEtran}
 \bibliography{refs}
