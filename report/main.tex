@@ -59,12 +59,13 @@ Type & Label & Train & Val & Test\\\midrule
 \end{tabular}\end{table}
 
 \subsection{Input/output format and truncation}
-The prompt (Qwen chat format) contains a system instruction, the patient note as \texttt{[id] sentence} lines using the dataset's original sentence IDs, the criterion type, the criterion text, and the allowed labels for that type. The target is \texttt{\{"evidence\_ids":[\dots],"label":"\dots"\}<|im\_end|>}. Placing evidence \emph{before} the label conditions the decision on the cited sentences. The prompt is tokenised as a \emph{patient prefix} and a \emph{criterion suffix}; the same function is used in training, evaluation and the application, which makes prefix-KV reuse across criteria exact. If a prompt exceeded 1{,}800 tokens, patient sentences would be dropped from the end and logged with a flag if gold evidence was lost; with the Qwen tokenizer the longest prompt is 610 tokens (mean 326), so \textbf{no example was truncated} (audit in the manifest). Explanations are generated deterministically from the predicted label and the quoted cited sentences; this guarantees that an explanation cannot introduce facts absent from the record and avoids training on GPT-4 explanations. Outputs are parsed strictly as JSON; a fallback searches for an allowed label string; otherwise the prediction is \emph{invalid} and counted as wrong.
+The prompt (Qwen chat format) contains a system instruction, the patient note as \texttt{[id] sentence} lines using the dataset's original sentence IDs, the criterion type, the criterion text, and the allowed labels for that type. The target is \verb!{"evidence_ids":[...],"label":"..."}<|im_end|>!. Placing evidence \emph{before} the label conditions the decision on the cited sentences. The prompt is tokenised as a \emph{patient prefix} and a \emph{criterion suffix}; the same function is used in training, evaluation and the application, which makes prefix-KV reuse across criteria exact. If a prompt exceeded 1{,}800 tokens, patient sentences would be dropped from the end and logged with a flag if gold evidence was lost; with the Qwen tokenizer the longest prompt is 610 tokens (mean 326), so \textbf{no example was truncated} (audit in the manifest). Explanations are generated deterministically from the predicted label and the quoted cited sentences; this guarantees that an explanation cannot introduce facts absent from the record and avoids training on GPT-4 explanations. Outputs are parsed strictly as JSON; a fallback searches for an allowed label string; otherwise the prediction is \emph{invalid} and counted as wrong.
 
 \subsection{Model selection}
 Table~\ref{tab:models} compares the candidates. We select Qwen2.5-1.5B-Instruct: Apache-2.0 licence (no gating), GQA with only 2 KV heads (28\,KB of fp16 KV cache per token, 6$\times$ less than multi-head attention), a 151{,}936-token vocabulary shared with the 0.5B sibling that serves as a speculative draft, and fp32 weights (6.2\,GB) that fit a free 16\,GB T4 for LoRA training without quantisation. Llama-3.2-1B has a more restrictive community licence and a gated download, and Llama-3.2-3B leaves little memory for training on a T4.
 
 \begin{table}[t]\centering\caption{Open-weight decoder candidates.}\label{tab:models}\setlength{\tabcolsep}{3pt}
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{lccc}\toprule
  & Qwen2.5-1.5B-I & Qwen2.5-0.5B-I & Llama-3.2-1B-I\\\midrule
 Params & 1.54B & 0.49B & 1.24B\\
@@ -76,10 +77,10 @@ Licence & Apache-2.0 & Apache-2.0 & Llama 3.2 Comm.\\
 fp16 weights & 3.1\,GB & 1.0\,GB & 2.5\,GB\\
 KV / token (fp16) & 28\,KB & 12\,KB & 32\,KB\\
 Role & target & draft & rejected\\\bottomrule
-\end{tabular}\end{table}
+\end{tabular}}\end{table}
 
 \subsection{Fine-tuning}
-Objective: token-level cross-entropy on the answer tokens only (prompt tokens masked with $-100$). LoRA ($r{=}16$, $\alpha{=}32$, dropout 0.05) is applied to all attention and MLP projections (18.46M trainable parameters, 1.18\% of 1.56B). AdamW, learning rate $2\times10^{-4}$, cosine schedule with 5\% warm-up, effective batch 16 (micro-batch 2 $\times$ 8 accumulation steps, gradient checkpointing), 3 epochs, fp32 base weights with fp16 autocast, seed 42, on one Kaggle T4 (759\,s, peak 9.5\,GB). A checkpoint is saved every epoch; the final model is the checkpoint with the best \emph{validation} macro-F1 (tie-break: evidence micro-F1). The test split is only accessible with an explicit \texttt{--final\_test} flag and was evaluated once.
+Objective: token-level cross-entropy on the answer tokens only (prompt tokens masked with $-100$). LoRA ($r{=}16$, $\alpha{=}32$, dropout 0.05) is applied to all attention and MLP projections (18.46M trainable parameters, 1.18\% of 1.56B). AdamW, learning rate $2\times10^{-4}$, cosine schedule with 5\% warm-up, effective batch 16 (micro-batch 2 $\times$ 8 accumulation steps, gradient checkpointing), 3 epochs, fp32 base weights with fp16 autocast, seed 42, on one Kaggle T4 (759\,s, peak 9.5\,GB). A checkpoint is saved every epoch; the final model is the checkpoint with the best \emph{validation} macro-F1 (tie-break: evidence micro-F1). The test split is only accessible with an explicit \verb!--final_test! flag and was evaluated once.
 
 \subsection{System architecture}
 Fig.~\ref{fig:arch} shows the pipeline. The LoRA adapter is merged into the base weights ($W\leftarrow W+\tfrac{\alpha}{r}BA$) so that all inference code sees a dense model.
@@ -247,7 +248,7 @@ LoRA 0.5B & 8 & 0.87 & 6.60 & 0.87 & \checkmark\\\bottomrule
 
 \subsection{Design decisions, alternatives and failures}\label{sec:decisions}
 \begin{itemize}
-\item \textbf{LoRA vs.\ QLoRA vs.\ full fine-tuning.} Full fine-tuning would need fp32 weights, gradients and two Adam moments ($\approx$25\,GB) and would over-fit 602 examples. LoRA with fp32 frozen weights peaked at 9.5\,GB on the T4, so QLoRA's 4-bit quantisation (and its quantisation error and bitsandbytes dependency) was unnecessary; it remains available via \texttt{--qlora}.
+\item \textbf{LoRA vs.\ QLoRA vs.\ full fine-tuning.} Full fine-tuning would need fp32 weights, gradients and two Adam moments ($\approx$25\,GB) and would over-fit 602 examples. LoRA with fp32 frozen weights peaked at 9.5\,GB on the T4, so QLoRA's 4-bit quantisation (and its quantisation error and bitsandbytes dependency) was unnecessary; it remains available via \verb!--qlora!.
 \item \textbf{Model selection by task metric, not loss.} Validation loss favoured epoch 1, validation macro-F1 favoured epoch 3 (0.263 vs.\ 0.353); since the deliverable is a classifier we used macro-F1.
 \item \textbf{Evidence-first JSON.} Chosen so that the label is generated conditioned on the cited sentences; a label-first ablation was not run within the time budget and is future work.
 \item \textbf{Template explanations vs.\ generated rationales.} Generated rationales would need GPT-4 explanations as targets (not permitted) and could hallucinate; templates quoting cited sentences are faithful by construction but shallow.
