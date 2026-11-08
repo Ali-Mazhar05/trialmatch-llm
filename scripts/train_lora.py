@@ -7,10 +7,17 @@ masked with -100), so the model learns p(JSON answer | patient, criterion).
 """
 import argparse
 import json
+import os
 import random
 import sys
 import time
 from pathlib import Path
+
+# Train on ONE GPU. With 2 visible GPUs (Kaggle "T4 x2") the HF Trainer silently
+# wraps the model in nn.DataParallel, which keeps extra replicas/outputs on GPU 0
+# and ran out of memory. Must be set before torch initialises CUDA.
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "0")
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -70,11 +77,22 @@ def main():
     ap.add_argument("--load_dtype", default="fp32", choices=list(DTYPES), help="base weight dtype")
     ap.add_argument("--amp", default="fp16", choices=["fp16", "bf16", "none"])
     ap.add_argument("--qlora", action="store_true", help="load base in 4-bit NF4 (bitsandbytes)")
-    ap.add_argument("--grad_ckpt", action="store_true")
+    ap.add_argument("--no_grad_ckpt", dest="grad_ckpt", action="store_false",
+                    help="disable gradient checkpointing (on by default: without it 28 layers of MLP "
+                         "activations for batch 4 need ~10 GB and OOM on a 16 GB T4)")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
     random.seed(args.seed); np.random.seed(args.seed); torch.manual_seed(args.seed)
+    # On <=16 GB GPUs keep the per-device micro-batch at 2 and raise gradient
+    # accumulation so the effective batch (batch_size * grad_accum) is unchanged:
+    # the fp32 logits over a 151,936-token vocabulary dominate peak memory.
+    if torch.cuda.is_available() and args.batch_size > 2 and \
+            torch.cuda.get_device_properties(0).total_memory < 20 * 2**30:
+        eff = args.batch_size * args.grad_accum
+        args.auto_adjusted = f"micro-batch {args.batch_size}->2, grad_accum {args.grad_accum}->{eff // 2} (effective {eff})"
+        args.batch_size, args.grad_accum = 2, eff // 2
+        print("[memory]", args.auto_adjusted)
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
     (out / "run_config.json").write_text(json.dumps(vars(args), indent=2))
 
@@ -100,7 +118,8 @@ def main():
     if args.qlora:
         model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=args.grad_ckpt)
     elif args.grad_ckpt:
-        model.gradient_checkpointing_enable()
+        model.config.use_cache = False
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
         model.enable_input_require_grads()
     model = get_peft_model(model, LoraConfig(
         r=args.r, lora_alpha=args.alpha, lora_dropout=args.lora_dropout,
