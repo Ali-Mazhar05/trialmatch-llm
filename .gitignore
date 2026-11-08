@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+# large weights live on the Hugging Face Hub (see README)
+runs/*/checkpoint-*/
+runs/**/adapter_model.safetensors
+runs/**/optimizer.pt
+*.safetensors
+*.bin
+report/*.aux
+report/*.log
+report/*.out
+report/*.bbl
+report/*.blg
+results/val/smoke_*/

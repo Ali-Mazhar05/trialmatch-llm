@@ -1,0 +1,15 @@
+# torch is intentionally not pinned: use the CUDA build provided by Kaggle/Colab,
+# or `pip install torch` (CPU) locally. Tested with torch 2.9.1.
+transformers==5.22.2
+peft==0.21.2
+accelerate==1.15.0
+datasets==5.1.0
+huggingface_hub
+scikit-learn
+pandas
+numpy
+matplotlib
+gradio==6.31.0
+pytest
+# optional: QLoRA experiments only
+# bitsandbytes
