@@ -20,6 +20,8 @@ def main():
     args = ap.parse_args()
     run = Path(args.run)
     ckpts = sorted(run.glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))
+    if not ckpts:
+        sys.exit(f"No checkpoint-* folders in {run}: training did not finish. Fix the training cell first.")
     rows = []
     for c in ckpts:
         name = f"{run.name}_{c.name}"

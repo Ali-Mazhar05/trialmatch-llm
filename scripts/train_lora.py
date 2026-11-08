@@ -19,7 +19,7 @@ import numpy as np  # noqa: E402
 import torch  # noqa: E402
 
 from trialmatch.data import load_processed, split_note  # noqa: E402
-from trialmatch.model_io import DTYPES, load_tokenizer  # noqa: E402
+from trialmatch.model_io import DTYPES, load_tokenizer, patch_peft_torchao  # noqa: E402
 from trialmatch.prompting import encode_prompt, target_text  # noqa: E402
 
 
@@ -78,6 +78,7 @@ def main():
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
     (out / "run_config.json").write_text(json.dumps(vars(args), indent=2))
 
+    patch_peft_torchao()
     from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
     from transformers import AutoModelForCausalLM, Trainer, TrainingArguments
 
