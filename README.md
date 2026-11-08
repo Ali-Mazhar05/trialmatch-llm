@@ -12,7 +12,9 @@ tiled online-softmax attention, greedy speculative decoding, and a browser appli
 | Split | patient-grouped 37/8/8, `np.random.default_rng(42)` → [`splits/manifest.json`](splits/manifest.json) |
 | Target model | `Qwen/Qwen2.5-1.5B-Instruct` (Apache-2.0) + LoRA r=16 |
 | Draft model | `Qwen/Qwen2.5-0.5B-Instruct` (same tokenizer, 151,936-token vocabulary) |
-| Fine-tuned adapter | `HF_ADAPTER_REPO` ← _fill in after upload_ |
+| Fine-tuned adapter | [`AliMaz30/trialmatch-qwen2.5-1.5b-lora`](https://huggingface.co/AliMaz30/trialmatch-qwen2.5-1.5b-lora) (downloaded automatically by the app) |
+| Draft adapter | [`AliMaz30/trialmatch-qwen2.5-0.5b-draft-lora`](https://huggingface.co/AliMaz30/trialmatch-qwen2.5-0.5b-draft-lora) |
+| Held-out test results | accuracy 0.228 → **0.694**, macro-F1 0.192 → **0.386**, evidence micro-F1 0.236 → **0.546** (base → fine-tuned) |
 | Demo video | _link_ |
 | Report | [`report/main.pdf`](report/) |
 
