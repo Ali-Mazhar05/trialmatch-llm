@@ -110,9 +110,12 @@ def run_screen(note, trial, inc, exc, mode, progress=gr.Progress()):
 
 def detail(choice, rep):
     if not rep or not choice:
-        return "", ""
-    idx = int(choice.split(".")[0]) - 1
-    r = rep["criteria_results"][idx]
+        return "Run a screening first, then choose a criterion to inspect.", ""
+    try:
+        idx = int(str(choice).split(".")[0]) - 1
+        r = rep["criteria_results"][idx]
+    except (ValueError, IndexError):
+        return "Choose one of the criteria from the latest screening run.", ""
     md = (f"### {r['criterion_type'].title()} criterion {r['index']}\n> {html.escape(r['criterion_text'])}\n\n"
           f"**Prediction:** `{r['label']}`  \n**Cited sentence IDs:** {r['evidence_ids'] or 'none'}  \n"
           f"**Explanation:** {html.escape(r['explanation'])}  \n"
@@ -122,13 +125,21 @@ def detail(choice, rep):
     return md, note_markdown(rep, r["evidence_ids"])
 
 
+UNSEEN_NAME = "Unseen example (not from dataset)"
+
+
 def load_example(name):
-    if name == "Unseen example (not from dataset)":
+    if not name:
+        # nothing selected: keep the current inputs, just tell the user what to do
+        gr.Warning("Choose an example in the dropdown first.")
+        return gr.update(), gr.update(), gr.update(), gr.update()
+    if name == UNSEEN_NAME:
         e = UNSEEN
         return e["note"], "Synthetic diabetes trial", e["inc"], e["exc"]
     e = EXAMPLES.get(name)
     if not e:
-        raise gr.Error("Example not found.")
+        gr.Warning(f"Example '{name}' is not available (data/processed/val.jsonl missing?).")
+        return gr.update(), gr.update(), gr.update(), gr.update()
     return e["note"], e["trial"], e["inc"], e["exc"]
 
 
@@ -191,8 +202,8 @@ with gr.Blocks(title="TrialMatch-LLM") as demo:
 
     with gr.Tab("Screening"):
         with gr.Row():
-            ex_dd = gr.Dropdown(["Unseen example (not from dataset)"] + list(EXAMPLES), label="Load an example",
-                                value=None)
+            ex_dd = gr.Dropdown([UNSEEN_NAME] + list(EXAMPLES), label="Load an example (choose one, it loads automatically)",
+                                value=UNSEEN_NAME)
             ex_btn = gr.Button("Load example")
         with gr.Row():
             with gr.Column(scale=1):
@@ -207,7 +218,7 @@ with gr.Blocks(title="TrialMatch-LLM") as demo:
         table = gr.Dataframe(label="Criterion-level results", wrap=True)
         with gr.Row():
             with gr.Column():
-                crit_dd = gr.Dropdown(label="Inspect a criterion", choices=[])
+                crit_dd = gr.Dropdown(label="Inspect a criterion", choices=[], allow_custom_value=True)
                 crit_md = gr.Markdown()
             with gr.Column():
                 gr.Markdown("**Patient note: sentences cited for the selected criterion are highlighted**")
@@ -243,6 +254,7 @@ with gr.Blocks(title="TrialMatch-LLM") as demo:
         kv_df = gr.Dataframe(label="KV-cache benchmark (GPU run)")
 
     ex_btn.click(load_example, ex_dd, [note, trial, inc, exc])
+    ex_dd.input(load_example, ex_dd, [note, trial, inc, exc])   # selecting an item loads it immediately
     run_btn.click(run_screen, [note, trial, inc, exc, mode],
                   [report_state, table, verdict, files, crit_dd, crit_md, note_md])
     crit_dd.change(detail, [crit_dd, report_state], [crit_md, note_md])

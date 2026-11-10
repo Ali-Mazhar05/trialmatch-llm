@@ -15,7 +15,7 @@ tiled online-softmax attention, greedy speculative decoding, and a browser appli
 | Fine-tuned adapter | [`AliMaz30/trialmatch-qwen2.5-1.5b-lora`](https://huggingface.co/AliMaz30/trialmatch-qwen2.5-1.5b-lora) (downloaded automatically by the app) |
 | Draft adapter | [`AliMaz30/trialmatch-qwen2.5-0.5b-draft-lora`](https://huggingface.co/AliMaz30/trialmatch-qwen2.5-0.5b-draft-lora) |
 | Held-out test results | accuracy 0.228 → **0.694**, macro-F1 0.192 → **0.386**, evidence micro-F1 0.236 → **0.546** (base → fine-tuned) |
-| Demo video | _link_ |
+| Demo video | [Google Drive](https://drive.google.com/file/d/1mdfGT0wA9mfI2GgF4zFHcVGBx6cwqDQ6/view?usp=sharing) |
 | Report | [`report/main.pdf`](report/) |
 
 ## 1. Quick start: run the application (no coding needed)
